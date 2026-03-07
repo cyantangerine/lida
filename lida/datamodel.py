@@ -117,7 +117,7 @@ class GoalWebRequest:
     )
     extra_hint_interest: str = ""
     n: int = 5
-    chat_id: str = ""
+    chat_id: int = 0
 
 
 @dataclass
@@ -130,7 +130,7 @@ class VisualizeWebRequest:
     textgen_config: Optional[TextGenerationConfig] = field(
         default_factory=TextGenerationConfig
     )
-    chat_id: str = ""
+    chat_id: int = 0
 
 
 @dataclass
@@ -160,8 +160,8 @@ class VisualizeConclusionRequest:
 class VisualizeEditWebRequest:
     """A Visualize Edit Web Request"""
 
-    chat_id: str
-    goal_id: str
+    chat_id: int
+    goal_id: int
     summary: Summary
     code: str
     instructions: Union[str, List[str]]
@@ -189,8 +189,8 @@ class VisualizeRepairWebRequest:
 class VisualizeExplainWebRequest:
     """A Visualize Explain Web Request"""
 
-    chat_id: str
-    goal_id: str
+    chat_id: int
+    goal_id: int
     code: str
     library: str = "seaborn"
     textgen_config: Optional[TextGenerationConfig] = field(
@@ -202,7 +202,7 @@ class VisualizeExplainWebRequest:
 class VisualizeEvalWebRequest:
     """A Visualize Eval Web Request"""
 
-    chat_id: str
+    chat_id: int
     code: str
     goal: Goal
     library: str = "seaborn"
@@ -273,4 +273,4 @@ class VisWebRequest:
     """A Visualize Web Request"""
 
     summary: Summary
-    goal_id: str
+    goal_id: int

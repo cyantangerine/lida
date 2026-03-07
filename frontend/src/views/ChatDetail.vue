@@ -76,7 +76,10 @@
                   <pre v-show="showCode" class="code-block">{{ goal.code }}</pre>
                 </div>
                 
-                <div ref="chartContainer" class="chart-container"></div>
+                <!-- 直接使用 img 标签显示图片 -->
+                <div v-if="goal.raster" class="chart-container">
+                  <img :src="'data:image/png;base64,' + goal.raster" alt="可视化图表" style="max-width: 100%; height: auto;" />
+                </div>
                 
                 <div class="actions mt-20">
                   <el-button-group>
@@ -140,8 +143,15 @@
 </template>
 
 <script>
-import { getChatInfo, visualize, explainVisualization, editVisualize, generateGoals, recommendVisualization } from '@/api'
-import embed from 'vega-embed'
+import {
+  getChatInfo,
+  visualize,
+  explainVisualization,
+  editVisualize,
+  generateGoals,
+  recommendVisualization,
+  evaluateVisualization
+} from '@/api'
 
 export default {
   name: 'ChatDetail',
@@ -208,60 +218,25 @@ export default {
       try {
         const res = await visualize(this.summary, goal, this.chatId)
         if (res.status && res.charts && res.charts.length > 0) {
+          // 更新 goal 数据
           goal.code = res.charts[0].code
           goal.raster = res.charts[0].raster
           goal.library = res.charts[0].library
           
-          // 渲染图表
-          this.$nextTick(() => {
-            this.renderChart(goal)
-          })
+          // 强制触发 Vue 响应式更新
+          this.$set(goal, 'code', goal.code)
+          this.$set(goal, 'raster', goal.raster)
+          this.$set(goal, 'library', goal.library)
+          
+          // 等待 DOM 更新
+          setTimeout(() => {
+            // 不需要手动渲染，让 Vue 自动处理
+          }, 100)
         }
       } catch (error) {
         console.error(error)
       } finally {
         goal.loading = false
-      }
-    },
-
-    renderChart(goal) {
-      const container = this.$refs.chartContainer
-      if (!container || !container.length) return
-      
-      const chartContainer = Array.isArray(container) ? container[0] : container
-      
-      // 如果有 Vega-Lite spec，使用它渲染
-      if (goal.spec) {
-        try {
-          const specObj = typeof goal.spec === 'string' ? JSON.parse(goal.spec) : goal.spec
-          embed(chartContainer, specObj, {
-            mode: 'vega-lite',
-            actions: {
-              export: true,
-              source: false,
-              compiled: false,
-              editor: false
-            }
-          })
-        } catch (error) {
-          console.error('渲染 Vega 图表失败:', error)
-        }
-      } else if (goal.raster) {
-        // 否则显示光栅图像
-        const img = document.createElement('img')
-        img.src = `data:image/png;base64,${goal.raster}`
-        img.style.maxWidth = '100%'
-        img.style.height = 'auto'
-        chartContainer.innerHTML = ''
-        chartContainer.appendChild(img)
-      } else if (goal.code) {
-        // 如果只有代码，显示代码执行结果提示
-        chartContainer.innerHTML = `
-          <div style="text-align: center; padding: 40px; color: #999;">
-            <i class="el-icon-success" style="font-size: 48px; margin-bottom: 10px;"></i>
-            <p>代码已生成，请查看下方代码块</p>
-          </div>
-        `
       }
     },
 

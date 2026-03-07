@@ -16,7 +16,8 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from lida.ext.ollama.local import LocalTextGenerator
-from lida.ext.auth import authenticate_user, ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, create_user, get_current_user
+from lida.ext.auth import authenticate_user, ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, create_user, \
+    get_current_user
 from lida.ext.entity import SessionLocal, Chat, Goal, Explain, Evaluate, Edit, User
 from ..components import Manager
 from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig, VisualizeEditWebRequest, \
@@ -26,7 +27,6 @@ from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig,
 # 设置环境变量
 os.environ["OPENAI_API_BASE"] = "http://localhost:11434/"
 os.environ["OPENAI_API_KEY"] = "EMPTY"
-
 
 textgen = LocalTextGenerator(
     provider="ollama",
@@ -78,6 +78,7 @@ def get_db():
 
 def handle_api_exceptions(func):
     """装饰器：捕获 API 接口异常，打印堆栈和请求参数"""
+
     @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
@@ -96,33 +97,35 @@ def handle_api_exceptions(func):
                 else:
                     # 基本类型直接保存
                     request_params[key] = value
-            
+
             return await func(*args, **kwargs)
         except Exception as exception_error:
             # 打印完整的错误信息
-            error_message = f"""\n{'='*80}
+            error_message = f"""\n{'=' * 80}
 【API 接口异常】{func.__name__}
-{'='*80}
+{'=' * 80}
 【请求参数】
 {json.dumps(request_params, indent=2, default=str, ensure_ascii=False)}
 【异常信息】
 {type(exception_error).__name__}: {str(exception_error)}
 【堆栈跟踪】
 {traceback.format_exc()}
-{'='*80}"""
+{'=' * 80}"""
             logger.error(error_message)
             print(error_message)  # 同时输出到控制台
-            
+
             # 返回错误响应
             return {
                 "status": False,
                 "message": f"Error in {func.__name__}: {str(exception_error)}"
             }
+
     return wrapper
 
 
 def handle_sync_api_exceptions(func):
     """装饰器：捕获同步 API 接口异常，打印堆栈和请求参数"""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -141,29 +144,70 @@ def handle_sync_api_exceptions(func):
                 else:
                     # 基本类型直接保存
                     request_params[key] = value
-            
+
             return func(*args, **kwargs)
         except Exception as exception_error:
             # 打印完整的错误信息
-            error_message = f"""\n{'='*80}
+            error_message = f"""\n{'=' * 80}
 【API 接口异常】{func.__name__}
-{'='*80}
+{'=' * 80}
 【请求参数】
 {json.dumps(request_params, indent=2, default=str, ensure_ascii=False)}
 【异常信息】
 {type(exception_error).__name__}: {str(exception_error)}
 【堆栈跟踪】
 {traceback.format_exc()}
-{'='*80}"""
+{'=' * 80}"""
             logger.error(error_message)
             print(error_message)  # 同时输出到控制台
-            
+
             # 返回错误响应
             return {
                 "status": False,
                 "message": f"Error in {func.__name__}: {str(exception_error)}"
             }
+
     return wrapper
+
+
+# FastAPI 全局异常处理器，用于捕获 422 等 HTTP 异常
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    """处理请求参数验证错误 (422)"""
+    # 尝试获取请求体
+    body = None
+    try:
+        import asyncio
+        # 注意：这里无法直接获取原始请求体，因为已经被 FastAPI 解析过了
+        # 但我们可以通过 exc.errors 看到验证错误详情
+        error_details = exc.errors()
+    except Exception:
+        error_details = []
+
+    error_message = f"""\n{'=' * 80}
+【422 参数验证错误】{request.method} {request.url.path}
+{'=' * 80}
+【验证错误详情】
+{json.dumps(error_details, indent=2, ensure_ascii=False)}
+【异常信息】
+{type(exc).__name__}: {str(exc)}
+{'=' * 80}"""
+    logger.error(error_message)
+    print(error_message)
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": False,
+            "message": f"参数验证失败：{str(exc)}",
+            "errors": error_details
+        }
+    )
+
 
 @api.post("/visualize")
 @handle_api_exceptions
@@ -315,37 +359,31 @@ async def evaluate_visualization(req: VisualizeEvalWebRequest,
                                  current_user: User = Depends(get_current_user)) -> dict:
     """Given a visualization code, provide an evaluation of the code"""
 
-    try:
-        db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.question == req.goal.question).first()
-        if db_goal is None:
-            return {"status": False,
-                    "message": "Goal not found with the given chat_id and goal"}
-
-        evaluations = lida.evaluate(
-            code=req.code,
-            goal=req.goal,
-            textgen_config=req.textgen_config if req.textgen_config else TextGenerationConfig(
-                n=1,
-                temperature=0),
-            library=req.library)[0]
-
-        # save to database
-        db_evaluate = db.query(Evaluate).filter(Evaluate.goal_id == db_goal.id).first()
-        if db_evaluate is None:
-            db_evaluate = Evaluate(goal_id=db_goal.id,
-                                   evaluate={"evaluations": evaluations})
-            db.add(db_evaluate)
-        else:
-            db_evaluate.evaluate = {"evaluations": evaluations}
-        db.commit()
-
-        return {"status": True, "evaluations": evaluations,
-                "message": "Successfully generated evaluation"}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization evaluation: {str(exception_error)}")
+    db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.question == req.goal.question).first()
+    if db_goal is None:
         return {"status": False,
-                "message": f"Error generating visualization evaluation. {str(exception_error)}"}
+                "message": "Goal not found with the given chat_id and goal"}
+
+    evaluations = lida.evaluate(
+        code=req.code,
+        goal=req.goal,
+        textgen_config=req.textgen_config if req.textgen_config else TextGenerationConfig(
+            n=1,
+            temperature=0),
+        library=req.library)[0]
+
+    # save to database
+    db_evaluate = db.query(Evaluate).filter(Evaluate.goal_id == db_goal.id).first()
+    if db_evaluate is None:
+        db_evaluate = Evaluate(goal_id=db_goal.id,
+                               evaluate={"evaluations": evaluations})
+        db.add(db_evaluate)
+    else:
+        db_evaluate.evaluate = {"evaluations": evaluations}
+    db.commit()
+
+    return {"status": True, "evaluations": evaluations,
+            "message": "Successfully generated evaluation"}
 
 
 @api.post("/visualize/recommend")
@@ -353,24 +391,18 @@ async def evaluate_visualization(req: VisualizeEvalWebRequest,
 async def recommend_visualization(req: VisualizeRecommendRequest) -> dict:
     """Given a dataset summary, generate a visualization recommendations"""
 
-    try:
-        textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
-        charts = lida.recommend(
-            summary=req.summary,
-            code=req.code,
-            textgen_config=textgen_config,
-            library=req.library,
-            return_error=True)
+    textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
+    charts = lida.recommend(
+        summary=req.summary,
+        code=req.code,
+        textgen_config=textgen_config,
+        library=req.library,
+        return_error=True)
 
-        if len(charts) == 0:
-            return {"status": False, "message": "No charts generated"}
-        return {"status": True, "charts": charts,
-                "message": "Successfully generated chart recommendation"}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization recommendation: {str(exception_error)}")
-        return {"status": False,
-                "message": f"Error generating visualization recommendation."}
+    if len(charts) == 0:
+        return {"status": False, "message": "No charts generated"}
+    return {"status": True, "charts": charts,
+            "message": "Successfully generated chart recommendation"}
 
 
 @api.post("/visualize/conclusion")
@@ -378,42 +410,28 @@ async def recommend_visualization(req: VisualizeRecommendRequest) -> dict:
 async def conclusion_visualization(req: VisualizeConclusionRequest) -> dict:
     """Given a dataset summary, generate a visualization recommendations"""
 
-    try:
-        textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
-        charts = lida.conclusion(
-            summary=req.summary,
-            code=req.code,
-            goal=req.goal,
-            hint=req.hint,
-            library=req.library,
-            textgen_config=textgen_config
-        )
+    textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
+    charts = lida.conclusion(
+        summary=req.summary,
+        code=req.code,
+        goal=req.goal,
+        hint=req.hint,
+        library=req.library,
+        textgen_config=textgen_config
+    )
 
-        if len(charts) == 0:
-            return {"status": False, "message": "No charts generated"}
-        return {"status": True, "charts": charts,
-                "message": "Successfully generated chart conclusion"}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization conclusion: {str(exception_error)}")
-
-        import traceback
-        traceback.print_exception(exception_error)
-        return {"status": False,
-                "message": f"Error generating visualization conclusion."}
+    if len(charts) == 0:
+        return {"status": False, "message": "No charts generated"}
+    return {"status": True, "charts": charts,
+            "message": "Successfully generated chart conclusion"}
 
 
 @api.post("/text/generate")
 @handle_api_exceptions
 async def generate_text(textgen_config: TextGenerationConfig) -> dict:
     """Generate text given some prompt"""
-
-    try:
-        completions = textgen.generate(textgen_config)
-        return {"status": True, "completions": completions.text}
-    except Exception as exception_error:
-        logger.error(f"Error generating text: {str(exception_error)}")
-        return {"status": False, "message": f"Error generating text."}
+    completions = textgen.generate(textgen_config)
+    return {"status": True, "completions": completions.text}
 
 
 @api.post("/goal")
@@ -422,42 +440,27 @@ async def generate_goal(req: GoalWebRequest,
                         db: Session = Depends(get_db),
                         current_user: User = Depends(get_current_user)) -> dict:
     """Generate goals given a dataset summary"""
-    try:
-        db_chat = db.query(Chat).filter(Chat.id == req.chat_id, Chat.user_id == current_user.id).first()
-        if db_chat is None:
-            return {"status": False,
-                    "message": "Chat not found with the given chat_id"}
-        textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
-        goals = lida.goals(req.summary, n=req.n, textgen_config=textgen_config, hint=req.extra_hint_interest)
+    db_chat = db.query(Chat).filter(Chat.id == req.chat_id, Chat.user_id == current_user.id).first()
+    if db_chat is None:
+        return {"status": False,
+                "message": "Chat not found with the given chat_id"}
+    textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
+    goals = lida.goals(req.summary, n=req.n, textgen_config=textgen_config, hint=req.extra_hint_interest)
 
-        # save to database
-        db_chat.extra_hint_interest = req.extra_hint_interest
-        for goal in goals:
-            db_goal = Goal(chat_id=req.chat_id,
-                           index=goal.index,
-                           question=goal.question,
-                           visualization=goal.visualization,
-                           rationale=goal.rationale,
-                           is_auto=1)
-            db.add(db_goal)
-        db.commit()
+    # save to database
+    db_chat.extra_hint_interest = req.extra_hint_interest
+    for goal in goals:
+        db_goal = Goal(chat_id=req.chat_id,
+                       index=goal.index,
+                       question=goal.question,
+                       visualization=goal.visualization,
+                       rationale=goal.rationale,
+                       is_auto=1)
+        db.add(db_goal)
+    db.commit()
 
-        return {"status": True, "data": goals,
-                "message": f"Successfully generated {len(goals)} goals"}
-    except Exception as exception_error:
-        logger.error(f"Error generating goals: {str(exception_error)}")
-        # Check for a specific error message related to context length
-        if "context length" in str(exception_error).lower():
-            return {
-                "status": False,
-                "message": "The dataset you uploaded has too many columns. Please upload a dataset with fewer columns and try again."
-            }
-
-        # For other exceptions
-        return {
-            "status": False,
-            "message": f"Error generating visualization goals. {exception_error}"
-        }
+    return {"status": True, "data": goals,
+            "message": f"Successfully generated {len(goals)} goals"}
 
 
 @api.post("/summarize")
@@ -467,16 +470,12 @@ async def upload_file(file: UploadFile = Form(...),
                       chat_id: str = Form(...),
                       db: Session = Depends(get_db),
                       current_user: User = Depends(get_current_user)) -> dict:
-    try:
-        # print(data)
-        json_data = json.loads(data)
-        # print(json_data)
-        data: DescribeData = DescribeData(**json_data)
-    except JSONDecodeError:
-        return {"status": False,
-                "message": f"Data type not matched. {DescribeData}"}
+    # print(data)
+    json_data = json.loads(data)
+    # print(json_data)
+    data_parsed: DescribeData = DescribeData(**json_data)
     print(file.filename)
-    print(data)
+    print(data_parsed)
     # return {}
 
     """ Upload a file and return a summary of the data """
@@ -491,57 +490,52 @@ async def upload_file(file: UploadFile = Form(...),
         return {"status": False,
                 "message": f"Uploaded file type ({file.content_type}) not allowed. Allowed types are: csv, excel, json"}
 
-    try:
+    # save file to files folder
+    file_location = os.path.join(data_folder, file.filename)
+    # open file without deleting existing contents
+    with open(file_location, "wb+") as file_object:
+        file_object.write(file.file.read())
 
-        # save file to files folder
-        file_location = os.path.join(data_folder, file.filename)
-        # open file without deleting existing contents
-        with open(file_location, "wb+") as file_object:
-            file_object.write(file.file.read())
+    # summarize
+    textgen_config = TextGenerationConfig(n=1, temperature=0)
+    summary, unused_hint = lida.summarize(
+        data=file_location,
+        file_name=file.filename,
+        summary_method="llm",
+        summary_hint=data_parsed,
+        textgen_config=textgen_config)
 
-        # summarize
-        textgen_config = TextGenerationConfig(n=1, temperature=0)
-        summary, unused_hint = lida.summarize(
-            data=file_location,
-            file_name=file.filename,
-            summary_method="llm",
-            summary_hint=data,
-            textgen_config=textgen_config)
+    # save to database
+    if chat_id != "new":
+        db_chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+        if db_chat is None:
+            return {"status": False,
+                    "message": "Chat not found with the given chat_id"}
+        db_chat.data_filename = summary['file_name']
+        db_chat.dataset_name = summary['name']
+        db_chat.dataset_description = summary['dataset_description']
+        db_chat.field_names = {"field_names": summary['field_names']}
+        db_chat.fields = {"fields": summary['fields']}
+    else:
+        db_chat = Chat(user_id=current_user.id,
+                       name=summary['name'],
+                       data_filename=summary['file_name'],
+                       dataset_name=summary['name'],
+                       dataset_description=summary['dataset_description'],
+                       field_names={"field_names": summary['field_names']},
+                       fields={"fields": summary['fields']})
+        db.add(db_chat)
+    db.commit()
+    db.refresh(db_chat)
 
-        # save to database
-        if chat_id != "new":
-            db_chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
-            if db_chat is None:
-                return {"status": False,
-                        "message": "Chat not found with the given chat_id"}
-            db_chat.data_filename = summary['file_name']
-            db_chat.dataset_name = summary['name']
-            db_chat.dataset_description = summary['dataset_description']
-            db_chat.field_names = {"field_names": summary['field_names']}
-            db_chat.fields = {"fields": summary['fields']}
-        else:
-            db_chat = Chat(user_id=current_user.id,
-                           name=summary['name'],
-                           data_filename=summary['file_name'],
-                           dataset_name=summary['name'],
-                           dataset_description=summary['dataset_description'],
-                           field_names={"field_names": summary['field_names']},
-                           fields={"fields": summary['fields']})
-            db.add(db_chat)
-        db.commit()
-        db.refresh(db_chat)
-
-        ret = {"status": True, "summary": summary, "data_filename": file.filename,
-               "chat_id": db_chat.id}
-        if unused_hint:
-            ret["warning"] = {
-                "message": ",".join(unused_hint) + " fields description unmatched. ",
-                "data": unused_hint
-            }
-        return ret
-    except Exception as exception_error:
-        logger.error(f"Error processing file: {str(exception_error)}")
-        return {"status": False, "message": f"Error processing file."}
+    ret = {"status": True, "summary": summary, "data_filename": file.filename,
+           "chat_id": db_chat.id}
+    if unused_hint:
+        ret["warning"] = {
+            "message": ",".join(unused_hint) + " fields description unmatched. ",
+            "data": unused_hint
+        }
+    return ret
 
 
 # upload via url
@@ -558,18 +552,13 @@ async def upload_file_via_url(req: SummaryUrlRequest) -> dict:
     # download file
     url_response = requests.get(url, allow_redirects=True, timeout=1000)
     open(file_location, "wb").write(url_response.content)
-    try:
 
-        summary = lida.summarize(
-            data=file_location,
-            file_name=file_name,
-            summary_method="llm",
-            textgen_config=textgen_config)
-        return {"status": True, "summary": summary, "data_filename": file_name}
-    except Exception as exception_error:
-        traceback.print_exc()
-        logger.error(f"Error processing file: {str(exception_error)}")
-        return {"status": False, "message": f"Error processing file."}
+    summary = lida.summarize(
+        data=file_location,
+        file_name=file_name,
+        summary_method="llm",
+        textgen_config=textgen_config)
+    return {"status": True, "summary": summary, "data_filename": file_name}
 
 
 # convert image to infographics
@@ -579,18 +568,13 @@ async def upload_file_via_url(req: SummaryUrlRequest) -> dict:
 @handle_api_exceptions
 async def generate_infographics(req: InfographicsRequest) -> dict:
     """Generate infographics using the peacasso package"""
-    try:
-        result = lida.infographics(
-            visualization=req.visualization,
-            n=req.n,
-            style_prompt=req.style_prompt
-            # return_pil=req.return_pil
-        )
-        return {"status": True, "result": result, "message": "Successfully generated infographics"}
-    except Exception as exception_error:
-        logger.error(f"Error generating infographics: {str(exception_error)}")
-        return {"status": False,
-                "message": f"Error generating infographics. {str(exception_error)}"}
+    result = lida.infographics(
+        visualization=req.visualization,
+        n=req.n,
+        style_prompt=req.style_prompt
+        # return_pil=req.return_pil
+    )
+    return {"status": True, "result": result, "message": "Successfully generated infographics"}
 
 
 # list supported models
@@ -603,7 +587,8 @@ def list_models() -> dict:
 
 @api.get("/getChatList")
 @handle_sync_api_exceptions
-def get_chats(skip: int = 0, limit: int = 10, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def get_chats(skip: int = 0, limit: int = 10, db: Session = Depends(get_db),
+              current_user: User = Depends(get_current_user)) -> dict:
     chats = db.query(Chat).filter(Chat.user_id == current_user.id).offset(skip).limit(limit).all()
     chat_list = [{"id": chat.id,
                   "name": chat.name,
@@ -648,7 +633,7 @@ def get_chat_info(chat_id: str,
 async def get_chat_info(req: VisWebRequest,
                         db: Session = Depends(get_db),
                         current_user: User = Depends(get_current_user)) -> dict:
-    goal = db.query(Goal).join(Chat, Chat.id == Goal.chat_id)\
+    goal = db.query(Goal).join(Chat, Chat.id == Goal.chat_id) \
         .filter(Goal.id == req.goal_id, Chat.user_id == current_user.id).first()
     if not goal:
         return {"status": False, "message": "No such goal found."}
@@ -682,7 +667,8 @@ async def get_chat_info(req: VisWebRequest,
 # 登录获取令牌
 @api.post("/token")
 @handle_sync_api_exceptions
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> dict:
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(),
+                                 db: Session = Depends(get_db)) -> dict:
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         return {"status": False, "message": "Incorrect username or password"}
