@@ -1,9 +1,11 @@
+import logging
+
 import typer
 import uvicorn
 import os
 from typing_extensions import Annotated
 from llmx import providers
-
+logging.basicConfig(level=logging.DEBUG)
 # from lida.web.backend.app import launch
 print(os.environ["OPENAI_API_KEY"])
 app = typer.Typer()

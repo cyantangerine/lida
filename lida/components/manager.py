@@ -34,7 +34,7 @@ class Manager(object):
             text_gen (TextGenerator, optional): Text generator object. Defaults to None.
         """
 
-        self.text_gen = text_gen or llm()
+        self.text_gen = text_gen # or llm()
 
         self.summarizer = Summarizer()
         self.goal = GoalExplorer()
@@ -98,12 +98,12 @@ class Manager(object):
             logger.info("Provider is not set, using default provider - %s", config.provider)
             return
 
-        if self.text_gen.provider != config.provider:
-            logger.info(
-                "Switching Text Generator Provider from %s to %s",
-                self.text_gen.provider,
-                config.provider)
-            self.text_gen = llm(provider=config.provider)
+        # if self.text_gen.provider != config.provider:
+        #     logger.info(
+        #         "Switching Text Generator Provider from %s to %s",
+        #         self.text_gen.provider,
+        #         config.provider)
+        #     self.text_gen = llm(provider=config.provider)
 
     def summarize(
             self,

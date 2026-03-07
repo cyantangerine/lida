@@ -2,7 +2,6 @@ import json
 import os
 import logging
 from json import JSONDecodeError
-from typing import Dict
 
 import requests
 from fastapi import FastAPI, UploadFile, Form
@@ -10,16 +9,36 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import traceback
 
-from llmx import llm, providers
-from pydantic import BaseModel
+from llmx import providers
 
-from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig, UploadUrl, VisualizeEditWebRequest, \
+from lida.ollama.local import LocalTextGenerator
+from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig, VisualizeEditWebRequest, \
     VisualizeEvalWebRequest, VisualizeExplainWebRequest, VisualizeRecommendRequest, VisualizeRepairWebRequest, \
     VisualizeWebRequest, InfographicsRequest, VisualizeConclusionRequest, DescribeData
 from ..components import Manager
 
+
+# 设置环境变量
+os.environ["OPENAI_API_BASE"] = "http://localhost:11434/"
+os.environ["OPENAI_API_KEY"] = "EMPTY"
+
+
 # instantiate model and generator
-textgen = llm()
+# textgen = llm(
+#     provider="openai",
+#     api_type="azure",
+#     api_version="v1",
+#     azure_endpoint="http://127.0.0.1:11435",
+#     api_key="EMPTY"
+# )
+textgen = LocalTextGenerator(
+    provider="ollama",
+    api_key="EMPTY",
+    model="deepseek-r1",
+    # api_version="v1",
+    api_base="http://localhost:11434"
+)
+
 logger = logging.getLogger("lida")
 api_docs = os.environ.get("LIDA_API_DOCS", "False") == "True"
 
@@ -332,7 +351,7 @@ async def upload_file_via_url(req: SummaryUrlRequest) -> dict:
             textgen_config=textgen_config)
         return {"status": True, "summary": summary, "data_filename": file_name}
     except Exception as exception_error:
-        # traceback.print_exc()
+        traceback.print_exc()
         logger.error(f"Error processing file: {str(exception_error)}")
         return {"status": False, "message": f"Error processing file."}
 

@@ -116,6 +116,7 @@ class Summarizer():
         response = text_gen.generate(messages=messages, config=textgen_config)
         enriched_summary = base_summary
         try:
+            logger.info(f"Enriched summary: {response}")
             json_string = clean_code_snippet(response.text[0]["content"])
             enriched_summary = json.loads(json_string)
             print(enriched_summary)
