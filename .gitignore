@@ -1,6 +1,5 @@
 output/
 .vscode
-frontend
 notebooks/experimental/*   
 .azure
 .release.sh

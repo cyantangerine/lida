@@ -1,47 +1,33 @@
 import json
-import os
 import logging
+import os
+import traceback
 from datetime import timedelta
 from json import JSONDecodeError
+from functools import wraps
 
 import requests
 from fastapi import FastAPI, UploadFile, Form, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-import traceback
-
-from llmx import llm, providers
+from llmx import providers
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from .auth import authenticate_user, ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, create_user, get_current_user
-from .entity import SessionLocal, Chat, Goal, Explain, Evaluate, Edit, User
-from pydantic import BaseModel
-
-from lida.ollama.local import LocalTextGenerator
+from lida.ext.ollama.local import LocalTextGenerator
+from lida.ext.auth import authenticate_user, ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, create_user, get_current_user
+from lida.ext.entity import SessionLocal, Chat, Goal, Explain, Evaluate, Edit, User
+from ..components import Manager
 from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig, VisualizeEditWebRequest, \
-from .models import Token
-from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig, UploadUrl, VisualizeEditWebRequest, \
     VisualizeEvalWebRequest, VisualizeExplainWebRequest, VisualizeRecommendRequest, VisualizeRepairWebRequest, \
     VisualizeWebRequest, InfographicsRequest, VisualizeConclusionRequest, DescribeData, UserCreate, VisWebRequest
-from ..components import Manager
-from lida.ollamaTextGenerator import OllamaTextGenerator
-
 
 # 设置环境变量
 os.environ["OPENAI_API_BASE"] = "http://localhost:11434/"
 os.environ["OPENAI_API_KEY"] = "EMPTY"
 
 
-# instantiate model and generator
-# textgen = llm(
-#     provider="openai",
-#     api_type="azure",
-#     api_version="v1",
-#     azure_endpoint="http://127.0.0.1:11435",
-#     api_key="EMPTY"
-# )
 textgen = LocalTextGenerator(
     provider="ollama",
     api_key="EMPTY",
@@ -89,133 +75,207 @@ def get_db():
 
 # def check_model
 
+
+def handle_api_exceptions(func):
+    """装饰器：捕获 API 接口异常，打印堆栈和请求参数"""
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            # 提取请求参数
+            request_params = {}
+            for key, value in kwargs.items():
+                if hasattr(value, 'dict') and callable(getattr(value, 'dict')):
+                    # Pydantic 模型转为字典
+                    try:
+                        request_params[key] = value.dict()
+                    except Exception:
+                        request_params[key] = str(value)
+                elif hasattr(value, '__dict__'):
+                    # 其他对象转为字典
+                    request_params[key] = value.__dict__
+                else:
+                    # 基本类型直接保存
+                    request_params[key] = value
+            
+            return await func(*args, **kwargs)
+        except Exception as exception_error:
+            # 打印完整的错误信息
+            error_message = f"""\n{'='*80}
+【API 接口异常】{func.__name__}
+{'='*80}
+【请求参数】
+{json.dumps(request_params, indent=2, default=str, ensure_ascii=False)}
+【异常信息】
+{type(exception_error).__name__}: {str(exception_error)}
+【堆栈跟踪】
+{traceback.format_exc()}
+{'='*80}"""
+            logger.error(error_message)
+            print(error_message)  # 同时输出到控制台
+            
+            # 返回错误响应
+            return {
+                "status": False,
+                "message": f"Error in {func.__name__}: {str(exception_error)}"
+            }
+    return wrapper
+
+
+def handle_sync_api_exceptions(func):
+    """装饰器：捕获同步 API 接口异常，打印堆栈和请求参数"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            # 提取请求参数
+            request_params = {}
+            for key, value in kwargs.items():
+                if hasattr(value, 'dict') and callable(getattr(value, 'dict')):
+                    # Pydantic 模型转为字典
+                    try:
+                        request_params[key] = value.dict()
+                    except Exception:
+                        request_params[key] = str(value)
+                elif hasattr(value, '__dict__'):
+                    # 其他对象转为字典
+                    request_params[key] = value.__dict__
+                else:
+                    # 基本类型直接保存
+                    request_params[key] = value
+            
+            return func(*args, **kwargs)
+        except Exception as exception_error:
+            # 打印完整的错误信息
+            error_message = f"""\n{'='*80}
+【API 接口异常】{func.__name__}
+{'='*80}
+【请求参数】
+{json.dumps(request_params, indent=2, default=str, ensure_ascii=False)}
+【异常信息】
+{type(exception_error).__name__}: {str(exception_error)}
+【堆栈跟踪】
+{traceback.format_exc()}
+{'='*80}"""
+            logger.error(error_message)
+            print(error_message)  # 同时输出到控制台
+            
+            # 返回错误响应
+            return {
+                "status": False,
+                "message": f"Error in {func.__name__}: {str(exception_error)}"
+            }
+    return wrapper
+
 @api.post("/visualize")
+@handle_api_exceptions
 async def visualize_data(req: VisualizeWebRequest,
                          db: Session = Depends(get_db),
                          current_user: User = Depends(get_current_user)) -> dict:
     """Generate goals given a dataset summary"""
-    try:
-        db_chat = db.query(Chat).filter(Chat.id == req.chat_id, Chat.user_id == current_user.id).first()
-        if db_chat is None:
-            return {"status": False,
-                    "message": "Chat not found with the given chat_id"}
-        # print(req.textgen_config)
-        charts = lida.visualize(
-            summary=req.summary,
-            goal=req.goal,
-            textgen_config=req.textgen_config if req.textgen_config else TextGenerationConfig(),
-            library=req.library, return_error=True)
-        print("found charts: ", len(charts), " for goal: ")
-        if len(charts) == 0:
-            return {"status": False, "message": "No charts generated"}
-
-        # save to database
-        db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.question == req.goal.question).first()
-        if db_goal is None:
-            db_goal = Goal(chat_id=req.chat_id,
-                           index=req.goal.index,
-                           question=req.goal.question,
-                           visualization=req.goal.visualization,
-                           rationale=req.goal.rationale,
-                           is_auto=0,
-                           library=req.library,
-                           code=charts["code"])
-        else:
-            db_goal.library = req.library
-            db_goal.code = charts[0].code
-        db.commit()
-        db.refresh(db_goal)
-
-        return {"status": True, "charts": charts,
-                "message": "Successfully generated charts.",
-                "goal_id": db_goal.id}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization goals: {str(exception_error)}")
+    db_chat = db.query(Chat).filter(Chat.id == req.chat_id, Chat.user_id == current_user.id).first()
+    if db_chat is None:
         return {"status": False,
-                "message": f"Error generating visualization goals. {str(exception_error)}"}
+                "message": "Chat not found with the given chat_id"}
+    # print(req.textgen_config)
+    charts = lida.visualize(
+        summary=req.summary,
+        goal=req.goal,
+        textgen_config=req.textgen_config if req.textgen_config else TextGenerationConfig(),
+        library=req.library, return_error=True)
+    print("found charts: ", len(charts), " for goal: ")
+    if len(charts) == 0:
+        return {"status": False, "message": "No charts generated"}
+
+    # save to database
+    db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.question == req.goal.question).first()
+    if db_goal is None:
+        db_goal = Goal(chat_id=req.chat_id,
+                       index=req.goal.index,
+                       question=req.goal.question,
+                       visualization=req.goal.visualization,
+                       rationale=req.goal.rationale,
+                       is_auto=0,
+                       library=req.library,
+                       code=charts["code"])
+    else:
+        db_goal.library = req.library
+        db_goal.code = charts[0].code
+    db.commit()
+    db.refresh(db_goal)
+
+    return {"status": True, "charts": charts,
+            "message": "Successfully generated charts.",
+            "goal_id": db_goal.id}
 
 
 @api.post("/visualize/edit")
+@handle_api_exceptions
 async def edit_visualization(req: VisualizeEditWebRequest,
                              db: Session = Depends(get_db),
                              current_user: User = Depends(get_current_user)) -> dict:
     """Given a visualization code, and a goal, generate a new visualization"""
-    try:
-        db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.id == req.goal_id).first()
-        if db_goal is None:
-            return {"status": False,
-                    "message": "Goal not found with the given chat_id and question"}
-
-        textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
-        charts = lida.edit(
-            code=req.code,
-            summary=req.summary,
-            instructions=req.instructions,
-            textgen_config=textgen_config,
-            library=req.library, return_error=True)
-
-        # charts = [asdict(chart) for chart in charts]
-        if len(charts) == 0:
-            return {"status": False, "message": "No charts generated"}
-
-        # save to database
-        db_goal.library = req.library
-        db_goal.code = charts[0].code
-        result = db.execute(delete(Edit).where(Edit.goal_id == db_goal.id))
-        if isinstance(req.instructions, str):
-            db_edit = Edit(goal_id=db_goal.id,
-                           index=0,
-                           edit=req.instructions)
-            db.add(db_edit)
-        elif isinstance(req.instructions, list):
-            index = 0
-            for instruction in req.instructions:
-                db_edit = Edit(goal_id=db_goal.id,
-                               index=index,
-                               edit=instruction)
-                index += 1
-                db.add(db_edit)
-        db.commit()
-
-        return {"status": True, "charts": charts,
-                "message": f"Successfully edited charts."}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization edits: {str(exception_error)}")
-        print(traceback.print_exc())
+    db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.id == req.goal_id).first()
+    if db_goal is None:
         return {"status": False,
-                "message": f"Error generating visualization edits."}
+                "message": "Goal not found with the given chat_id and question"}
+
+    textgen_config = req.textgen_config if req.textgen_config else TextGenerationConfig()
+    charts = lida.edit(
+        code=req.code,
+        summary=req.summary,
+        instructions=req.instructions,
+        textgen_config=textgen_config,
+        library=req.library, return_error=True)
+
+    # charts = [asdict(chart) for chart in charts]
+    if len(charts) == 0:
+        return {"status": False, "message": "No charts generated"}
+
+    # save to database
+    db_goal.library = req.library
+    db_goal.code = charts[0].code
+    result = db.execute(delete(Edit).where(Edit.goal_id == db_goal.id))
+    if isinstance(req.instructions, str):
+        db_edit = Edit(goal_id=db_goal.id,
+                       index=0,
+                       edit=req.instructions)
+        db.add(db_edit)
+    elif isinstance(req.instructions, list):
+        index = 0
+        for instruction in req.instructions:
+            db_edit = Edit(goal_id=db_goal.id,
+                           index=index,
+                           edit=instruction)
+            index += 1
+            db.add(db_edit)
+    db.commit()
+
+    return {"status": True, "charts": charts,
+            "message": f"Successfully edited charts."}
 
 
 @api.post("/visualize/repair")
+@handle_api_exceptions
 async def repair_visualization(req: VisualizeRepairWebRequest) -> dict:
     """ Given a visualization goal and some feedback, generate a new visualization that addresses the feedback"""
 
-    try:
+    charts = lida.repair(
+        code=req.code,
+        feedback=req.feedback,
+        goal=req.goal,
+        summary=req.summary,
+        textgen_config=req.textgen_config if req.textgen_config else TextGenerationConfig(),
+        library=req.library,
+        return_error=True
+    )
 
-        charts = lida.repair(
-            code=req.code,
-            feedback=req.feedback,
-            goal=req.goal,
-            summary=req.summary,
-            textgen_config=req.textgen_config if req.textgen_config else TextGenerationConfig(),
-            library=req.library,
-            return_error=True
-        )
-
-        if len(charts) == 0:
-            return {"status": False, "message": "No charts generated"}
-        return {"status": True, "charts": charts,
-                "message": "Successfully generated chart repairs"}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization repairs: {str(exception_error)}")
-        return {"status": False,
-                "message": f"Error generating visualization repairs."}
+    if len(charts) == 0:
+        return {"status": False, "message": "No charts generated"}
+    return {"status": True, "charts": charts,
+            "message": "Successfully generated chart repairs"}
 
 
 @api.post("/visualize/explain")
+@handle_api_exceptions
 async def explain_visualization(req: VisualizeExplainWebRequest,
                                 db: Session = Depends(get_db),
                                 current_user: User = Depends(get_current_user)) -> dict:
@@ -224,37 +284,32 @@ async def explain_visualization(req: VisualizeExplainWebRequest,
         n=1,
         temperature=0)
 
-    try:
-        db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.id == req.goal_id).first()
-        if db_goal is None:
-            return {"status": False,
-                    "message": "Goal not found with the given chat_id and question"}
-
-        explanations = lida.explain(
-            code=req.code,
-            textgen_config=textgen_config,
-            library=req.library)
-
-        # save to database
-        db_explain = db.query(Explain).filter(Explain.goal_id == db_goal.id).first()
-        if db_explain is None:
-            db_explain = Explain(goal_id=db_goal.id,
-                                 explanation={"explanations": explanations[0]})
-            db.add(db_explain)
-        else:
-            db_explain.explanation = {"explanations": explanations[0]}
-        db.commit()
-
-        return {"status": True, "explanations": explanations[0],
-                "message": "Successfully generated explanations"}
-
-    except Exception as exception_error:
-        logger.error(f"Error generating visualization explanation: {str(exception_error)}")
+    db_goal = db.query(Goal).filter(Goal.chat_id == req.chat_id, Goal.id == req.goal_id).first()
+    if db_goal is None:
         return {"status": False,
-                "message": f"Error generating visualization explanation."}
+                "message": "Goal not found with the given chat_id and question"}
+
+    explanations = lida.explain(
+        code=req.code,
+        textgen_config=textgen_config,
+        library=req.library)
+
+    # save to database
+    db_explain = db.query(Explain).filter(Explain.goal_id == db_goal.id).first()
+    if db_explain is None:
+        db_explain = Explain(goal_id=db_goal.id,
+                             explanation={"explanations": explanations[0]})
+        db.add(db_explain)
+    else:
+        db_explain.explanation = {"explanations": explanations[0]}
+    db.commit()
+
+    return {"status": True, "explanations": explanations[0],
+            "message": "Successfully generated explanations"}
 
 
 @api.post("/visualize/evaluate")
+@handle_api_exceptions
 async def evaluate_visualization(req: VisualizeEvalWebRequest,
                                  db: Session = Depends(get_db),
                                  current_user: User = Depends(get_current_user)) -> dict:
@@ -294,6 +349,7 @@ async def evaluate_visualization(req: VisualizeEvalWebRequest,
 
 
 @api.post("/visualize/recommend")
+@handle_api_exceptions
 async def recommend_visualization(req: VisualizeRecommendRequest) -> dict:
     """Given a dataset summary, generate a visualization recommendations"""
 
@@ -318,6 +374,7 @@ async def recommend_visualization(req: VisualizeRecommendRequest) -> dict:
 
 
 @api.post("/visualize/conclusion")
+@handle_api_exceptions
 async def conclusion_visualization(req: VisualizeConclusionRequest) -> dict:
     """Given a dataset summary, generate a visualization recommendations"""
 
@@ -347,6 +404,7 @@ async def conclusion_visualization(req: VisualizeConclusionRequest) -> dict:
 
 
 @api.post("/text/generate")
+@handle_api_exceptions
 async def generate_text(textgen_config: TextGenerationConfig) -> dict:
     """Generate text given some prompt"""
 
@@ -359,6 +417,7 @@ async def generate_text(textgen_config: TextGenerationConfig) -> dict:
 
 
 @api.post("/goal")
+@handle_api_exceptions
 async def generate_goal(req: GoalWebRequest,
                         db: Session = Depends(get_db),
                         current_user: User = Depends(get_current_user)) -> dict:
@@ -402,6 +461,7 @@ async def generate_goal(req: GoalWebRequest,
 
 
 @api.post("/summarize")
+@handle_api_exceptions
 async def upload_file(file: UploadFile = Form(...),
                       data: str = Form(...),
                       chat_id: str = Form(...),
@@ -486,6 +546,7 @@ async def upload_file(file: UploadFile = Form(...),
 
 # upload via url
 @api.post("/summarize/url")
+@handle_api_exceptions
 async def upload_file_via_url(req: SummaryUrlRequest) -> dict:
     """ Upload a file from a url and return a summary of the data """
     url = req.url
@@ -515,6 +576,7 @@ async def upload_file_via_url(req: SummaryUrlRequest) -> dict:
 
 
 @api.post("/infographer")
+@handle_api_exceptions
 async def generate_infographics(req: InfographicsRequest) -> dict:
     """Generate infographics using the peacasso package"""
     try:
@@ -540,6 +602,7 @@ def list_models() -> dict:
 
 
 @api.get("/getChatList")
+@handle_sync_api_exceptions
 def get_chats(skip: int = 0, limit: int = 10, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     chats = db.query(Chat).filter(Chat.user_id == current_user.id).offset(skip).limit(limit).all()
     chat_list = [{"id": chat.id,
@@ -551,6 +614,7 @@ def get_chats(skip: int = 0, limit: int = 10, db: Session = Depends(get_db), cur
 
 
 @api.get("/getChatInfo/{chat_id}")
+@handle_sync_api_exceptions
 def get_chat_info(chat_id: str,
                   db: Session = Depends(get_db),
                   current_user: User = Depends(get_current_user)) -> dict:
@@ -580,6 +644,7 @@ def get_chat_info(chat_id: str,
 
 
 @api.post("/getGoalInfo")
+@handle_api_exceptions
 async def get_chat_info(req: VisWebRequest,
                         db: Session = Depends(get_db),
                         current_user: User = Depends(get_current_user)) -> dict:
@@ -616,6 +681,7 @@ async def get_chat_info(req: VisWebRequest,
 
 # 登录获取令牌
 @api.post("/token")
+@handle_sync_api_exceptions
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> dict:
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
@@ -626,6 +692,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 
 @api.post("/register")
+@handle_sync_api_exceptions
 async def register_user(user: UserCreate, db: Session = Depends(get_db)) -> dict:
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:

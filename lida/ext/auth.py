@@ -6,7 +6,7 @@ import jwt
 from jwt import PyJWTError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from .entity import User, get_db
+from lida.ext.entity import User, get_db
 
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

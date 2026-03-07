@@ -4,5 +4,5 @@ OLLAMA_API_KEY = None                                           # 如果需要�
 OLLAMA_DEFAULT_MODEL = "qwen2.5:14b-instruct-q6_K_ctx32k"       # 默认使用的模型名称
 OLLAMA_MAX_TOKENS = 4096                                        # 默认最大 Token 限制
 
-# mysql数据库
-DATABASE_URL = "mysql+pymysql://root:ICPC2021spring.@localhost/lida"
+# sqlite 数据库
+DATABASE_URL = "sqlite:///./lida.db"

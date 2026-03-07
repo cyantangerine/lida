@@ -9,11 +9,6 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-
-def generate_unique_id():
-    return uuid.uuid4().int & (1 << 63) - 1
-
-
 class TimestampMixin:
     @declared_attr
     def create_time(cls):
@@ -35,7 +30,7 @@ event.listen(TimestampMixin, 'before_update', TimestampMixin.before_update_liste
 class Chat(TimestampMixin, Base):
     __tablename__ = "t_chat"
 
-    id = Column(BigInteger, primary_key=True, index=True, nullable=False, default=generate_unique_id)
+    id = Column(Integer, primary_key=True, index=True, nullable=False, autoincrement=True)
     user_id = Column(BigInteger, nullable=True)
     name = Column(String(45), nullable=True)
     data_filename = Column(String(45), nullable=True)
@@ -49,7 +44,7 @@ class Chat(TimestampMixin, Base):
 class Goal(TimestampMixin, Base):
     __tablename__ = "t_goal"
 
-    id = Column(BigInteger, primary_key=True, index=True, nullable=False, default=generate_unique_id)
+    id = Column(Integer, primary_key=True, index=True, nullable=False, autoincrement=True)
     chat_id = Column(BigInteger, nullable=True)
     index = Column(Integer, nullable=True)
     question = Column(String(255), nullable=True)
@@ -64,7 +59,7 @@ class Goal(TimestampMixin, Base):
 class Edit(TimestampMixin, Base):
     __tablename__ = "t_edit"
 
-    id = Column(BigInteger, primary_key=True, index=True, nullable=False, default=generate_unique_id)
+    id = Column(Integer, primary_key=True, index=True, nullable=False, autoincrement=True)
     goal_id = Column(BigInteger, nullable=True)
     index = Column(Integer, nullable=True)
     edit = Column(String(150), nullable=True)
@@ -73,7 +68,7 @@ class Edit(TimestampMixin, Base):
 class Explain(TimestampMixin, Base):
     __tablename__ = "t_explain"
 
-    id = Column(BigInteger, primary_key=True, index=True, nullable=False, default=generate_unique_id)
+    id = Column(Integer, primary_key=True, index=True, nullable=False, autoincrement=True)
     goal_id = Column(BigInteger, nullable=True)
     explanation = Column(JSON, nullable=True)
 
@@ -81,7 +76,7 @@ class Explain(TimestampMixin, Base):
 class Evaluate(TimestampMixin, Base):
     __tablename__ = "t_evaluate"
 
-    id = Column(BigInteger, primary_key=True, index=True, nullable=False, default=generate_unique_id)
+    id = Column(Integer, primary_key=True, index=True, nullable=False, autoincrement=True)
     goal_id = Column(BigInteger, nullable=True)
     evaluate = Column(JSON, nullable=True)
 
@@ -89,7 +84,7 @@ class Evaluate(TimestampMixin, Base):
 class User(TimestampMixin, Base):
     __tablename__ = "users"
 
-    id = Column(BigInteger, primary_key=True, index=True, nullable=False, default=generate_unique_id)
+    id = Column(Integer, primary_key=True, index=True, nullable=False, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False)
     password = Column(String(255), nullable=False)
 
